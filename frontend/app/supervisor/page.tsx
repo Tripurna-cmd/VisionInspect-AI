@@ -33,7 +33,7 @@ type ApiData = {
 
 type InspectionRow = Record<string, unknown>;
 
-function firstNumber(data: Summary | undefined, keys: string[]) {
+function firstNumber(data: Record<string, unknown> | undefined, keys: string[]) {
   for (const key of keys) {
     const value = data?.[key];
     if (value !== undefined && value !== null && value !== "") {
