@@ -1,1381 +1,599 @@
+
 "use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  ChangeEvent,
-  FormEvent,
-  useEffect,
-  useState,
-} from "react";
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  ClipboardCheck,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  RefreshCw,
+  ScanSearch,
+  ShieldCheck,
+  UserRound,
+  XCircle,
+} from "lucide-react";
 
-const API = "http://127.0.0.1:8000";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-type Result = {
-  category: string;
-  original_filename: string;
-  inspection_id: number;
+type Row = Record<string, unknown>;
+type Summary = Record<string, number | string | null | undefined>;
 
-  image_quality: {
-    width: number;
-    height: number;
-    brightness: number;
-    contrast: number;
-    sharpness_score: number;
-    sharpness: string;
-  };
-
-  defect_detection: {
-    is_defective: boolean;
-    prediction: string;
-    anomaly_score: number;
-    confidence: number;
-  };
-
-  defect_classification?: {
-    defect_type: string;
-    classification_confidence: number;
-    classification_method: string;
-  };
-
-  severity_assessment?: {
-    severity_score: number;
-    severity_level: string;
-  };
-
-  quality_result: {
-    defect_type: string;
-    confidence_score: number;
-    severity_score: number;
-    severity_level: string;
-    is_passed: boolean;
-  };
-};
-
-type Summary = {
-  total_inspections: number;
-  passed_inspections: number;
-  failed_inspections: number;
-  pass_rate: number;
-  defect_rate: number;
-  average_confidence: number;
-  average_defect_severity: number;
-};
-
-type Defect = {
-  defect_type: string;
-  count: number;
-};
-
-type Severity = {
-  severity_level: string;
-  count: number;
-};
-
-type Product = {
-  product_name: string;
-  product_code: string;
-  total_inspections: number;
-  failed_inspections: number;
-  pass_rate: number;
-};
-
-type RecentInspection = {
-  inspection_id: number;
-  product_name: string;
-  product_code: string;
-  status: string;
-  created_at: string | null;
-  defect_type: string | null;
-  confidence_score: number | null;
-  severity_score: number | null;
-  severity_level: string | null;
-  is_passed: boolean | null;
-};
-
-type Trend = {
-  date: string;
-  inspections: number;
-  defects: number;
-};
-
-export default function Home() {
-  const [category, setCategory] = useState("bottle");
-  const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState("");
-  const [result, setResult] = useState<Result | null>(null);
-
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [defects, setDefects] = useState<Defect[]>([]);
-  const [severity, setSeverity] = useState<Severity[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [recent, setRecent] = useState<RecentInspection[]>([]);
-  const [trends, setTrends] = useState<Trend[]>([]);
-
-  const [loading, setLoading] = useState(false);
-  const [analyticsLoading, setAnalyticsLoading] = useState(true);
-  const [active, setActive] = useState("Dashboard");
-  const [error, setError] = useState("");
-
-  const loadAnalytics = async () => {
-    setAnalyticsLoading(true);
-
-    try {
-      const [
-        summaryRes,
-        defectsRes,
-        severityRes,
-        productsRes,
-        recentRes,
-        trendsRes,
-      ] = await Promise.all([
-        fetch(`${API}/analytics/summary`),
-        fetch(`${API}/analytics/defects`),
-        fetch(`${API}/analytics/severity`),
-        fetch(`${API}/analytics/products`),
-        fetch(`${API}/analytics/recent?limit=10`),
-        fetch(`${API}/analytics/trends?days=7`),
-      ]);
-
-      if (
-        !summaryRes.ok ||
-        !defectsRes.ok ||
-        !severityRes.ok ||
-        !productsRes.ok ||
-        !recentRes.ok ||
-        !trendsRes.ok
-      ) {
-        throw new Error("Unable to load analytics data.");
-      }
-
-      const [
-        summaryData,
-        defectsData,
-        severityData,
-        productsData,
-        recentData,
-        trendsData,
-      ] = await Promise.all([
-        summaryRes.json(),
-        defectsRes.json(),
-        severityRes.json(),
-        productsRes.json(),
-        recentRes.json(),
-        trendsRes.json(),
-      ]);
-
-      setSummary(summaryData);
-      setDefects(defectsData.defects || []);
-      setSeverity(severityData.severity || []);
-      setProducts(productsData.products || []);
-      setRecent(recentData.inspections || []);
-      setTrends(trendsData.trends || []);
-    } catch (err) {
-      console.error(err);
-      setError("Analytics service unavailable.");
-    } finally {
-      setAnalyticsLoading(false);
+function getNumber(data: Summary, keys: string[]) {
+  for (const key of keys) {
+    const value = data[key];
+    if (value !== undefined && value !== null && value !== "") {
+      const number = Number(value);
+      if (Number.isFinite(number)) return number;
     }
-  };
+  }
+  return 0;
+}
+
+function getText(row: Row, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value);
+    }
+  }
+  return "—";
+}
+
+function getRows(data: unknown): Row[] {
+  if (Array.isArray(data)) return data as Row[];
+
+  if (data && typeof data === "object") {
+    const object = data as Record<string, unknown>;
+    for (const key of ["items", "results", "inspections", "data", "recent"]) {
+      if (Array.isArray(object[key])) return object[key] as Row[];
+    }
+  }
+  return [];
+}
+
+export default function EngineerPage() {
+  const router = useRouter();
+
+  const [user, setUser] = useState<Row>({});
+  const [summary, setSummary] = useState<Summary>({});
+  const [defects, setDefects] = useState<Row[]>([]);
+  const [severity, setSeverity] = useState<Row[]>([]);
+  const [recent, setRecent] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [updated, setUpdated] = useState("");
 
   useEffect(() => {
-    loadAnalytics();
+    try {
+      const saved = localStorage.getItem("visioninspect_user");
+      if (saved) setUser(JSON.parse(saved));
+    } catch {
+      setUser({});
+    }
   }, []);
 
-  const chooseFile = (e: ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0];
-
-    if (!selected) return;
-
-    setFile(selected);
-    setPreview(URL.createObjectURL(selected));
-    setResult(null);
-    setError("");
-  };
-
-  const analyze = async (e: FormEvent) => {
-    e.preventDefault();
-
-    if (!file) {
-      setError("Select a product image before starting inspection.");
-      return;
-    }
-
+  async function loadData() {
     setLoading(true);
     setError("");
 
-    try {
-      const form = new FormData();
+    const token = localStorage.getItem("visioninspect_token");
+    const headers: HeadersInit = token
+      ? { Authorization: `Bearer ${token}` }
+      : {};
 
-      form.append("category", category);
-      form.append("file", file);
-
-      const response = await fetch(`${API}/inspection/analyze`, {
-        method: "POST",
-        body: form,
-      });
-
-      const data = await response.json();
-
+    async function request(path: string): Promise<unknown> {
+      const response = await fetch(`${API_URL}${path}`, { headers });
       if (!response.ok) {
-        throw new Error(data.detail || "Inspection failed.");
+        throw new Error(`${path} returned HTTP ${response.status}`);
       }
+      return response.json();
+    }
 
-      setResult(data);
+    try {
+      const [summaryData, defectData, severityData, recentData] =
+        await Promise.all([
+          request("/analytics/summary"),
+          request("/analytics/defects"),
+          request("/analytics/severity"),
+          request("/analytics/recent?limit=10"),
+        ]);
 
-      // Refresh live analytics after a new inspection
-      await loadAnalytics();
+      const summaryObject = summaryData as Record<string, unknown>;
+      setSummary(
+        (summaryObject.summary ?? summaryData) as Summary
+      );
+      setDefects(getRows(defectData));
+      setSeverity(getRows(severityData));
+      setRecent(getRows(recentData));
+      setUpdated(new Date().toLocaleTimeString());
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to connect to VisionInspect AI."
+        err instanceof Error ? err.message : "Could not load analytics."
       );
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const maxTrend = Math.max(
-    ...trends.map((item) =>
-      Math.max(item.inspections, item.defects)
-    ),
-    1
-  );
+  useEffect(() => {
+    void loadData();
+  }, []);
 
-  const maxDefect = Math.max(
-    ...defects.map((item) => item.count),
-    1
-  );
+  function logout() {
+    localStorage.removeItem("visioninspect_token");
+    localStorage.removeItem("visioninspect_token_type");
+    localStorage.removeItem("visioninspect_user");
+    router.replace("/");
+  }
 
-  const maxSeverity = Math.max(
-    ...severity.map((item) => item.count),
-    1
-  );
+  const total = getNumber(summary, [
+    "total_inspections",
+    "total",
+    "inspection_count",
+  ]);
+  const passed = getNumber(summary, [
+    "passed_inspections",
+    "passed",
+    "pass_count",
+  ]);
+  const failed = getNumber(summary, [
+    "failed_inspections",
+    "failed",
+    "fail_count",
+  ]);
+  const passRate = getNumber(summary, ["pass_rate"]);
+  const defectRate = getNumber(summary, ["defect_rate"]);
+
+  const name = getText(user, ["full_name", "name", "email"]);
+  const email = getText(user, ["email"]);
+
+  const nav = [
+    { label: "Dashboard", href: "/engineer", icon: LayoutDashboard },
+    { label: "Image Inspection", href: "/inspection", icon: ScanSearch },
+    { label: "Inspection History", href: "#history", icon: ClipboardCheck },
+    { label: "Quality Analytics", href: "#analytics", icon: BarChart3 },
+    { label: "Quality Reports", href: "/reports", icon: FileText },
+  ];
 
   return (
-    <main className="vision-app">
-
-      {/* SIDEBAR */}
-
-      <aside className="sidebar">
-
-        <div className="logo-area">
-          <div className="logo-mark">
-            <span>VI</span>
-          </div>
-
-          <div>
-            <h2>VisionInspect</h2>
-            <p>AI QUALITY CONTROL</p>
-          </div>
-        </div>
-
-        <div className="plant-status">
-          <span className="pulse"></span>
-
-          <div>
-            <strong>Production System</strong>
-            <small>Operational</small>
-          </div>
-        </div>
-
-        <div className="menu-title">
-          CONTROL CENTER
-        </div>
-
-        <nav>
-          {[
-            ["Dashboard", "⌂"],
-            ["Inspection", "◎"],
-            ["Inspection History", "▤"],
-            ["Analytics", "◒"],
-            ["Quality Control", "✓"],
-            ["Production Reports", "▥"],
-          ].map(([name, icon]) => (
-            <button
-              key={name}
-              className={`menu-item ${
-                active === name ? "selected" : ""
-              }`}
-              onClick={() => setActive(name)}
-            >
-              <span>{icon}</span>
-              {name}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-bottom">
-
-          <div className="ai-status">
-            <div className="ai-orb">AI</div>
-
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="flex min-h-screen">
+        <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white p-5 lg:flex">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-blue-600 p-2.5 text-white">
+              <ShieldCheck size={24} />
+            </div>
             <div>
-              <strong>AI Engine</strong>
-              <small>Isolation Forest</small>
+              <h1 className="font-bold">VisionInspect AI</h1>
+              <p className="text-xs text-slate-500">Quality inspection</p>
             </div>
-
-            <span className="online-dot"></span>
           </div>
 
-          <div className="profile">
-            <div className="profile-avatar">
-              A
-            </div>
-
-            <div>
-              <strong>Administrator</strong>
-              <small>Quality Manager</small>
-            </div>
-
-            <span>•••</span>
-          </div>
-
-        </div>
-      </aside>
-
-      {/* MAIN */}
-
-      <section className="main">
-
-        {/* HEADER */}
-
-        <header className="header">
-
-          <div>
-            <div className="breadcrumb">
-              CONTROL CENTER / {active.toUpperCase()}
-            </div>
-
-            <h1>
-              {active === "Dashboard"
-                ? "Manufacturing Intelligence"
-                : active}
-            </h1>
-
-            <p>
-              AI-powered visual inspection and production
-              quality monitoring
+          <div className="mt-8 rounded-xl bg-blue-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+              Quality Engineer
             </p>
+            <p className="mt-2 font-semibold">{name}</p>
+            <p className="mt-1 break-all text-xs text-slate-500">{email}</p>
           </div>
 
-          <div className="header-actions">
-
-            <div className="system-time">
-              <span className="live"></span>
-              LIVE SYSTEM
-            </div>
-
-            <button
-              className="notification"
-              onClick={loadAnalytics}
-              title="Refresh analytics"
-            >
-              ↻
-            </button>
-
-            <div className="date-box">
-              <small>PLANT STATUS</small>
-              <strong>Operational</strong>
-            </div>
-
-          </div>
-
-        </header>
-
-        {/* KPI */}
-
-        <section className="kpis">
-
-          <KPI
-            label="TOTAL INSPECTIONS"
-            value={
-              analyticsLoading
-                ? "..."
-                : String(summary?.total_inspections ?? 0)
-            }
-            detail="All recorded inspections"
-            icon="◎"
-          />
-
-          <KPI
-            label="QUALITY PASS RATE"
-            value={
-              analyticsLoading
-                ? "..."
-                : `${summary?.pass_rate ?? 0}%`
-            }
-            detail="Production quality"
-            icon="✓"
-          />
-
-          <KPI
-            label="DEFECT RATE"
-            value={
-              analyticsLoading
-                ? "..."
-                : `${summary?.defect_rate ?? 0}%`
-            }
-            detail="Detected production defects"
-            icon="!"
-            danger={
-              (summary?.defect_rate ?? 0) > 50
-            }
-          />
-
-          <KPI
-            label="MODEL CONFIDENCE"
-            value={
-              analyticsLoading
-                ? "..."
-                : `${summary?.average_confidence ?? 0}%`
-            }
-            detail="Average AI confidence"
-            icon="AI"
-          />
-
-        </section>
-
-        {/* WORKSPACE */}
-
-        <section className="dashboard-grid">
-
-          {/* INSPECTION */}
-
-          <div className="panel inspection-panel">
-
-            <div className="panel-header">
-
-              <div>
-                <span className="panel-kicker">
-                  COMPUTER VISION
-                </span>
-
-                <h2>AI Inspection Station</h2>
-              </div>
-
-              <span className="station-badge">
-                ● STATION 01
-              </span>
-
-            </div>
-
-            <form onSubmit={analyze}>
-
-              <div className="inspection-controls">
-
-                <div>
-                  <label>PRODUCT CATEGORY</label>
-
-                  <select
-                    value={category}
-                    onChange={(e) =>
-                      setCategory(e.target.value)
-                    }
-                  >
-                    <option value="bottle">Bottle</option>
-                    <option value="cable">Cable</option>
-                    <option value="screw">Screw</option>
-                    <option value="tile">Tile</option>
-                    <option value="toothbrush">
-                      Toothbrush
-                    </option>
-                    <option value="wood">Wood</option>
-                  </select>
-                </div>
-
-                <div className="model-chip">
-                  <span>MODEL</span>
-                  <strong>
-                    {category}_anomaly_model
-                  </strong>
-                </div>
-
-              </div>
-
-              <label className="drop-zone">
-
-                {preview ? (
-
-                  <div className="preview-wrap">
-
-                    <img
-                      src={preview}
-                      alt="Inspection"
-                    />
-
-                    <div className="scan-line"></div>
-
-                    <div className="preview-overlay">
-                      <span>VISION FEED</span>
-                      <strong>
-                        READY FOR ANALYSIS
-                      </strong>
-                    </div>
-
-                  </div>
-
-                ) : (
-
-                  <div className="drop-content">
-
-                    <div className="camera-icon">
-                      ◉
-                    </div>
-
-                    <h3>
-                      Drop inspection image
-                    </h3>
-
-                    <p>
-                      Upload a product image for
-                      automated computer vision
-                      inspection
-                    </p>
-
-                    <span className="formats">
-                      JPG • JPEG • PNG
-                    </span>
-
-                  </div>
-
-                )}
-
-                <input
-                  type="file"
-                  accept=".jpg,.jpeg,.png"
-                  onChange={chooseFile}
-                  hidden
-                />
-
-              </label>
-
-              {file && (
-                <div className="selected-file">
-                  <span>IMAGE SELECTED</span>
-                  <strong>{file.name}</strong>
-                </div>
-              )}
-
-              {error && (
-                <div className="error-message">
-                  ⚠ {error}
-                </div>
-              )}
-
-              <button
-                className="inspect-button"
-                disabled={loading}
-              >
-                <span>
-                  {loading
-                    ? "AI ENGINE ANALYZING..."
-                    : "START AI INSPECTION"}
-                </span>
-
-                <b>→</b>
-              </button>
-
-            </form>
-          </div>
-
-          {/* RESULT */}
-
-          <div className="panel result-panel">
-
-            <div className="panel-header">
-
-              <div>
-                <span className="panel-kicker">
-                  QUALITY ASSESSMENT
-                </span>
-
-                <h2>Inspection Intelligence</h2>
-              </div>
-
-              {result && (
-                <span className="inspection-id">
-                  #{result.inspection_id}
-                </span>
-              )}
-
-            </div>
-
-            {!result && (
-
-              <div className="waiting">
-
-                <div className="radar">
-                  <div></div>
-                  <div></div>
-                  <div></div>
-                  <span>AI</span>
-                </div>
-
-                <h3>Awaiting Inspection</h3>
-
-                <p>
-                  Upload a manufacturing image to
-                  activate the AI quality assessment
-                  engine.
-                </p>
-
-              </div>
-
-            )}
-
-            {result && (
-
-              <div className="result-content">
-
-                <div
-                  className={`decision ${
-                    result.defect_detection
-                      .is_defective
-                      ? "bad"
-                      : "good"
+          <p className="mb-3 mt-8 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Workspace
+          </p>
+          <nav className="space-y-1">
+            {nav.map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium ${
+                    index === 0
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-600 hover:bg-slate-100"
                   }`}
                 >
+                  <Icon size={18} />
+                  {item.label}
+                </a>
+              );
+            })}
+          </nav>
 
-                  <div className="decision-icon">
-                    {result.defect_detection
-                      .is_defective
-                      ? "!"
-                      : "✓"}
-                  </div>
+          <button
+            onClick={logout}
+            className="mt-auto flex items-center gap-3 border-t border-slate-200 pt-5 text-sm font-medium text-red-600 hover:text-red-700"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
+        </aside>
 
-                  <div>
-                    <span>
-                      FINAL QUALITY DECISION
-                    </span>
+        <section className="min-w-0 flex-1">
+          <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-5 sm:px-8">
+            <div>
+              <p className="text-sm text-slate-500">
+                VisionInspect AI / Quality Engineer
+              </p>
+              <h2 className="mt-1 text-2xl font-bold">
+                Quality inspection workspace
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Inspect products, investigate defects, and review quality
+                results.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void loadData()}
+                disabled={loading}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw size={16} />
+                Refresh
+              </button>
+              <button
+                onClick={logout}
+                className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-white hover:bg-slate-700 lg:hidden"
+              >
+                Logout
+              </button>
+            </div>
+          </header>
 
-                    <h3>
-                      {result.quality_result
-                        .is_passed
-                        ? "QUALITY PASSED"
-                        : "DEFECT DETECTED"}
-                    </h3>
-                  </div>
-
-                </div>
-
-                <div className="analysis-grid">
-
-                  <Metric
-                    label="DEFECT TYPE"
-                    value={
-                      result.quality_result
-                        .defect_type
-                    }
-                  />
-
-                  <Metric
-                    label="CONFIDENCE"
-                    value={`${result.defect_detection.confidence}%`}
-                  />
-
-                  <Metric
-                    label="SEVERITY SCORE"
-                    value={`${result.quality_result.severity_score}/100`}
-                  />
-
-                  <Metric
-                    label="SEVERITY LEVEL"
-                    value={
-                      result.quality_result
-                        .severity_level
-                    }
-                  />
-
-                </div>
-
-                <div className="quality-analysis">
-
-                  <div className="quality-title">
-                    IMAGE QUALITY ANALYSIS
-                  </div>
-
-                  <QualityBar
-                    label="Brightness"
-                    value={
-                      result.image_quality
-                        .brightness
-                    }
-                  />
-
-                  <QualityBar
-                    label="Contrast"
-                    value={
-                      result.image_quality.contrast
-                    }
-                  />
-
-                  <QualityBar
-                    label="Sharpness"
-                    value={Math.min(
-                      100,
-                      result.image_quality
-                        .sharpness_score / 20
-                    )}
-                  />
-
-                </div>
-
-                <div className="recommendation">
-
-                  <span>
-                    QUALITY CONTROL ACTION
-                  </span>
-
-                  <strong>
-                    {result.quality_result
-                      .is_passed
-                      ? "Product approved for production"
-                      : "Product requires quality review"}
-                  </strong>
-
-                </div>
-
+          <div className="mx-auto max-w-7xl space-y-6 p-5 sm:p-8">
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                <strong>Analytics could not be loaded.</strong>
+                <p className="mt-1">{error}</p>
+                <p className="mt-1">
+                  Confirm that the backend is running, then select Refresh.
+                </p>
               </div>
             )}
 
-          </div>
-
-        </section>
-
-        {/* ANALYTICS */}
-
-        <section className="lower-grid">
-
-          {/* TREND */}
-
-          <div className="panel chart-panel">
-
-            <div className="panel-header">
-
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="panel-kicker">
-                  MANUFACTURING ANALYTICS
-                </span>
-
-                <h2>
-                  Inspection & Defect Trends
-                </h2>
+                <h3 className="font-semibold">Inspection performance</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Summary of recorded inspections
+                </p>
               </div>
-
-              <button
-                className="refresh-button"
-                onClick={loadAnalytics}
-              >
-                ↻ Refresh
-              </button>
-
+              <span className="text-xs text-slate-500">
+                {updated ? `Updated ${updated}` : "Loading data"}
+              </span>
             </div>
 
-            <div className="chart">
-
-              {trends.map((item) => {
-
-                const inspectionHeight =
-                  (item.inspections / maxTrend) *
-                  100;
-
-                const defectHeight =
-                  (item.defects / maxTrend) *
-                  100;
-
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                {
+                  label: "Total inspections",
+                  value: total,
+                  icon: ClipboardCheck,
+                  style: "bg-blue-50 text-blue-700",
+                },
+                {
+                  label: "Passed inspections",
+                  value: passed,
+                  icon: CheckCircle2,
+                  style: "bg-green-50 text-green-700",
+                },
+                {
+                  label: "Failed inspections",
+                  value: failed,
+                  icon: XCircle,
+                  style: "bg-red-50 text-red-700",
+                },
+                {
+                  label: "Pass rate",
+                  value: `${passRate}%`,
+                  icon: Activity,
+                  style: "bg-violet-50 text-violet-700",
+                },
+              ].map((metric) => {
+                const Icon = metric.icon;
                 return (
-                  <div
-                    className="bar-group"
-                    key={item.date}
+                  <article
+                    key={metric.label}
+                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
                   >
-
-                    <div className="trend-bars">
-
-                      <div
-                        className="bar"
-                        style={{
-                          height: `${Math.max(
-                            inspectionHeight,
-                            3
-                          )}%`,
-                        }}
-                        title={`Inspections: ${item.inspections}`}
-                      ></div>
-
-                      <div
-                        className="bar defect-bar"
-                        style={{
-                          height: `${Math.max(
-                            defectHeight,
-                            item.defects > 0
-                              ? 3
-                              : 0
-                          )}%`,
-                        }}
-                        title={`Defects: ${item.defects}`}
-                      ></div>
-
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-slate-500">{metric.label}</p>
+                      <span className={`rounded-lg p-2 ${metric.style}`}>
+                        <Icon size={20} />
+                      </span>
                     </div>
-
-                    <span>
-                      {item.date.slice(5)}
-                    </span>
-
-                  </div>
+                    <p className="mt-4 text-3xl font-bold">
+                      {loading ? "—" : metric.value}
+                    </p>
+                  </article>
                 );
               })}
-
             </div>
 
-            <div className="chart-footer">
-
-              <div>
-                <span className="legend-dot blue"></span>
-                Inspections
-              </div>
-
-              <div>
-                <span className="legend-dot red"></span>
-                Defects
-              </div>
-
-              <strong>
-                7-day monitoring
-              </strong>
-
-            </div>
-
-          </div>
-
-          {/* DEFECT DISTRIBUTION */}
-
-          <div className="panel system-panel">
-
-            <div className="panel-header">
-
-              <div>
-                <span className="panel-kicker">
-                  DEFECT INTELLIGENCE
-                </span>
-
-                <h2>
-                  Defect Distribution
-                </h2>
-              </div>
-
-            </div>
-
-            {defects.length === 0 ? (
-
-              <div className="no-data">
-                No defects recorded.
-              </div>
-
-            ) : (
-
-              <div className="analytics-list">
-
-                {defects.map((item) => (
-
-                  <div
-                    className="analytics-item"
-                    key={item.defect_type}
-                  >
-
-                    <div className="analytics-label">
-                      <span>
-                        {item.defect_type}
-                      </span>
-
-                      <strong>
-                        {item.count}
-                      </strong>
-                    </div>
-
-                    <div className="bar-track">
-                      <div
-                        className="bar-fill"
-                        style={{
-                          width: `${
-                            (item.count /
-                              maxDefect) *
-                            100
-                          }%`,
-                        }}
-                      ></div>
-                    </div>
-
-                  </div>
-
-                ))}
-
-              </div>
-            )}
-
-          </div>
-
-          {/* SEVERITY */}
-
-          <div className="panel system-panel">
-
-            <div className="panel-header">
-
-              <div>
-                <span className="panel-kicker">
-                  RISK MANAGEMENT
-                </span>
-
-                <h2>
-                  Severity Distribution
-                </h2>
-              </div>
-
-            </div>
-
-            {severity.length === 0 ? (
-
-              <div className="no-data">
-                No severity records.
-              </div>
-
-            ) : (
-
-              <div className="analytics-list">
-
-                {severity.map((item) => (
-
-                  <div
-                    className="analytics-item"
-                    key={item.severity_level}
-                  >
-
-                    <div className="analytics-label">
-                      <span>
-                        {item.severity_level}
-                      </span>
-
-                      <strong>
-                        {item.count}
-                      </strong>
-                    </div>
-
-                    <div className="bar-track">
-                      <div
-                        className="bar-fill"
-                        style={{
-                          width: `${
-                            (item.count /
-                              maxSeverity) *
-                            100
-                          }%`,
-                        }}
-                      ></div>
-                    </div>
-
-                  </div>
-
-                ))}
-
-              </div>
-            )}
-
-          </div>
-
-        </section>
-
-        {/* PRODUCT ANALYTICS */}
-
-        <section className="panel recent-panel">
-
-          <div className="panel-header">
-
-            <div>
-              <span className="panel-kicker">
-                PRODUCTION QUALITY
-              </span>
-
-              <h2>
-                Product Performance
-              </h2>
-            </div>
-
-          </div>
-
-          {products.length === 0 ? (
-
-            <div className="no-data">
-              No product analytics available.
-            </div>
-
-          ) : (
-
-            <div className="table-wrapper">
-
-              <table className="analytics-table">
-
-                <thead>
-                  <tr>
-                    <th>PRODUCT</th>
-                    <th>CODE</th>
-                    <th>INSPECTIONS</th>
-                    <th>FAILED</th>
-                    <th>PASS RATE</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-
-                  {products.map((product) => (
-
-                    <tr
-                      key={product.product_code}
-                    >
-
-                      <td>
-                        <strong>
-                          {product.product_name}
-                        </strong>
-                      </td>
-
-                      <td>
-                        {product.product_code}
-                      </td>
-
-                      <td>
-                        {product.total_inspections}
-                      </td>
-
-                      <td>
-                        {product.failed_inspections}
-                      </td>
-
-                      <td>
-                        <span
-                          className={
-                            product.pass_rate >= 80
-                              ? "status-pass"
-                              : "status-defect"
-                          }
-                        >
-                          {product.pass_rate}%
-                        </span>
-                      </td>
-
-                    </tr>
-
-                  ))}
-
-                </tbody>
-
-              </table>
-
-            </div>
-          )}
-
-        </section>
-
-        {/* RECENT INSPECTIONS */}
-
-        <section className="panel recent-panel">
-
-          <div className="panel-header">
-
-            <div>
-              <span className="panel-kicker">
-                INSPECTION MANAGEMENT
-              </span>
-
-              <h2>
-                Recent Inspections
-              </h2>
-            </div>
-
-            <span className="station-badge">
-              LIVE DATABASE
-            </span>
-
-          </div>
-
-          {recent.length === 0 ? (
-
-            <div className="no-data">
-              No inspection records available.
-            </div>
-
-          ) : (
-
-            <div className="recent-table">
-
-              {recent.map((inspection) => (
-
-                <div
-                  className="recent-row"
-                  key={inspection.inspection_id}
+            <section className="rounded-xl border border-blue-200 bg-blue-600 p-6 text-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-5">
+                <div className="max-w-xl">
+                  <p className="text-sm font-medium text-blue-100">
+                    Inspection tool
+                  </p>
+                  <h3 className="mt-2 text-2xl font-bold">
+                    Analyze a product image
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-blue-100">
+                    Upload a product image through the existing inspection
+                    workflow to review defect predictions, confidence,
+                    severity, and the quality decision returned by the backend.
+                  </p>
+                </div>
+                <Link
+                  href="/inspection"
+                  className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 font-semibold text-blue-700 hover:bg-blue-50"
                 >
+                  <ScanSearch size={18} />
+                  Open inspection
+                </Link>
+              </div>
+            </section>
 
-                  <div className="recent-image">
-                    <span>VI</span>
+            <div className="grid gap-6 xl:grid-cols-5">
+              <section
+                id="history"
+                className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      Recent inspection records
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Latest results available from the backend
+                    </p>
                   </div>
-
-                  <div className="recent-info">
-
-                    <strong>
-                      Inspection #
-                      {inspection.inspection_id}
-                    </strong>
-
-                    <span>
-                      {inspection.product_name}
-                    </span>
-
-                    <small>
-                      {inspection.defect_type ||
-                        "No Defect"}
-                    </small>
-
-                  </div>
-
-                  <div className="recent-metric">
-
-                    <span>CONFIDENCE</span>
-
-                    <strong>
-                      {inspection.confidence_score !==
-                      null
-                        ? `${inspection.confidence_score}%`
-                        : "—"}
-                    </strong>
-
-                  </div>
-
-                  <div className="recent-metric">
-
-                    <span>SEVERITY</span>
-
-                    <strong>
-                      {inspection.severity_level ||
-                        "None"}
-                    </strong>
-
-                  </div>
-
-                  <div
-                    className={
-                      inspection.is_passed
-                        ? "status-pass"
-                        : "status-defect"
-                    }
-                  >
-                    {inspection.is_passed
-                      ? "PASSED"
-                      : "DEFECT"}
-                  </div>
-
+                  <ClipboardCheck className="text-blue-600" size={22} />
                 </div>
 
-              ))}
+                <div className="mt-5 overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="px-3 py-3 font-medium">Product</th>
+                        <th className="px-3 py-3 font-medium">Defect</th>
+                        <th className="px-3 py-3 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {recent.map((row, index) => {
+                        const status = getText(row, [
+                          "status",
+                          "quality_status",
+                          "result",
+                        ]);
+                        const isPass = /pass|good|accepted/i.test(status);
+                        const isFail = /fail|defect|rejected/i.test(status);
 
+                        return (
+                          <tr key={String(row.id ?? index)}>
+                            <td className="px-3 py-4">
+                              <p className="font-medium">
+                                {getText(row, [
+                                  "product_name",
+                                  "product",
+                                  "category",
+                                  "product_code",
+                                ])}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {getText(row, [
+                                  "created_at",
+                                  "inspection_date",
+                                  "date",
+                                ])}
+                              </p>
+                            </td>
+                            <td className="px-3 py-4 text-slate-600">
+                              {getText(row, [
+                                "defect_type",
+                                "defect",
+                                "predicted_class",
+                              ])}
+                            </td>
+                            <td className="px-3 py-4">
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                  isPass
+                                    ? "bg-green-50 text-green-700"
+                                    : isFail
+                                      ? "bg-red-50 text-red-700"
+                                      : "bg-slate-100 text-slate-600"
+                                }`}
+                              >
+                                {status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!loading && recent.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={3}
+                            className="px-3 py-8 text-center text-slate-500"
+                          >
+                            No recent inspection records returned.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section
+                id="analytics"
+                className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-2"
+              >
+                <h3 className="text-lg font-semibold">Severity analysis</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Severity groups reported by the analytics API
+                </p>
+
+                {severity.length ? (
+                  <div className="mt-5 space-y-4">
+                    {severity.map((item, index) => {
+                      const level = getText(item, [
+                        "severity_level",
+                        "severity",
+                        "level",
+                      ]);
+                      const count = getNumber(item, [
+                        "count",
+                        "total",
+                        "value",
+                      ]);
+                      const critical = /critical|high/i.test(level);
+                      return (
+                        <div
+                          key={String(item.severity_level ?? item.level ?? index)}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 p-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`rounded-lg p-2 ${
+                                critical
+                                  ? "bg-red-50 text-red-600"
+                                  : "bg-amber-50 text-amber-700"
+                              }`}
+                            >
+                              <AlertTriangle size={18} />
+                            </span>
+                            <span className="text-sm font-medium">{level}</span>
+                          </div>
+                          <strong>{count}</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-5 text-sm text-slate-500">
+                    No severity data available.
+                  </p>
+                )}
+
+                <div className="mt-5 rounded-lg bg-slate-50 p-4">
+                  <p className="text-sm text-slate-500">Reported defect rate</p>
+                  <p className="mt-1 text-2xl font-bold">
+                    {loading ? "—" : `${defectRate}%`}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    Investigate repeated or severe defects before approving
+                    affected products.
+                  </p>
+                </div>
+              </section>
             </div>
-          )}
 
-        </section>
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="text-blue-600" size={23} />
+                <div>
+                  <h3 className="font-semibold">Defect category analysis</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Categories and counts returned by the backend
+                  </p>
+                </div>
+              </div>
 
-        {/* SYSTEM */}
+              {defects.length ? (
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {defects.map((item, index) => (
+                    <article
+                      key={String(item.defect_type ?? item.name ?? index)}
+                      className="rounded-xl border border-slate-200 p-4"
+                    >
+                      <p className="text-sm text-slate-500">
+                        {getText(item, [
+                          "defect_type",
+                          "name",
+                          "defect",
+                          "category",
+                        ])}
+                      </p>
+                      <p className="mt-2 text-2xl font-bold">
+                        {getNumber(item, ["count", "total", "value"])}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Recorded occurrences
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-5 text-sm text-slate-500">
+                  No defect category breakdown returned.
+                </p>
+              )}
 
-        <section className="panel system-panel">
+              <div className="mt-5">
+                <Link
+                  href="/reports"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium hover:bg-slate-50"
+                >
+                  <FileText size={17} />
+                  Open quality reports
+                </Link>
+              </div>
+            </section>
 
-          <div className="panel-header">
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center gap-3">
+                <UserRound className="text-blue-600" size={23} />
+                <div>
+                  <h3 className="font-semibold">My account</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Your signed-in account details
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-slate-500">Name</p>
+                  <p className="mt-1 font-medium">{name}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Email</p>
+                  <p className="mt-1 break-all font-medium">{email}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Role</p>
+                  <p className="mt-1 font-medium">Quality Engineer</p>
+                </div>
+              </div>
+              <button
+                onClick={logout}
+                className="mt-5 inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+              >
+                <LogOut size={17} />
+                Sign out
+              </button>
+            </section>
 
-            <div>
-              <span className="panel-kicker">
-                AI INFRASTRUCTURE
-              </span>
-
-              <h2>
-                System Intelligence
-              </h2>
-            </div>
-
+            <p className="text-xs leading-5 text-slate-400">
+              Review AI predictions alongside the inspection evidence and
+              applicable quality standards. Dashboard summaries reflect the
+              backend data available at the time of loading.
+            </p>
           </div>
-
-          <SystemRow
-            label="FastAPI Backend"
-            value="ONLINE"
-          />
-
-          <SystemRow
-            label="PostgreSQL Database"
-            value="CONNECTED"
-          />
-
-          <SystemRow
-            label="OpenCV Pipeline"
-            value="READY"
-          />
-
-          <SystemRow
-            label="Anomaly Detection"
-            value="ACTIVE"
-          />
-
-          <SystemRow
-            label="Manufacturing Analytics"
-            value="ACTIVE"
-          />
-
         </section>
-
-        <footer>
-
-          <span>
-            VISIONINSPECT AI
-          </span>
-
-          <span>
-            Manufacturing Defect Detection &
-            Quality Inspection System
-          </span>
-
-          <span>
-            AI ENGINE v1.0
-          </span>
-
-        </footer>
-
-      </section>
+      </div>
     </main>
-  );
-}
-
-
-/* KPI */
-
-function KPI({
-  label,
-  value,
-  detail,
-  icon,
-  danger,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  icon: string;
-  danger?: boolean;
-}) {
-  return (
-    <div className="kpi">
-
-      <div className="kpi-top">
-
-        <span>{label}</span>
-
-        <div
-          className={`kpi-icon ${
-            danger ? "danger" : ""
-          }`}
-        >
-          {icon}
-        </div>
-
-      </div>
-
-      <strong
-        className={
-          danger ? "danger-text" : ""
-        }
-      >
-        {value}
-      </strong>
-
-      <small>{detail}</small>
-
-    </div>
-  );
-}
-
-
-/* METRIC */
-
-function Metric({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="metric">
-
-      <span>{label}</span>
-
-      <strong>{value}</strong>
-
-    </div>
-  );
-}
-
-
-/* QUALITY BAR */
-
-function QualityBar({
-  label,
-  value,
-}: {
-  label: string;
-  value: number;
-}) {
-  const percentage = Math.min(
-    100,
-    Math.max(0, value)
-  );
-
-  return (
-    <div className="quality-bar">
-
-      <div>
-        <span>{label}</span>
-
-        <strong>
-          {value.toFixed(1)}
-        </strong>
-      </div>
-
-      <div className="bar-track">
-
-        <div
-          className="bar-fill"
-          style={{
-            width: `${percentage}%`,
-          }}
-        ></div>
-
-      </div>
-
-    </div>
-  );
-}
-
-
-/* SYSTEM ROW */
-
-function SystemRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="system-row">
-
-      <div>
-        <span className="system-dot"></span>
-        {label}
-      </div>
-
-      <strong>{value}</strong>
-
-    </div>
   );
 }

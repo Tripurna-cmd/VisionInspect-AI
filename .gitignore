@@ -10,3 +10,4 @@ node_modules/
 datasets/
 storage/uploads/
 storage/processed/
+frontend_old/
